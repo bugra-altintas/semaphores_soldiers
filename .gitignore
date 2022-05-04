@@ -1,3 +1,9 @@
 
 *.pdf
 hw2
+input*
+sketch
+sketch.cpp
+out
+hw2_output.*
+
