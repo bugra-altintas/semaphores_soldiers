@@ -73,8 +73,11 @@ void printGrid(){
 }
 
 void waitCells(pair<int,int>& coord, int si, int sj){ 
-    for(int i=coord.first;i<coord.first+si;i++){
-        for(int j=coord.second;j<coord.second+sj;j++){
+    int boundary_i = coord.first+si < n ? coord.first+si : n ;
+    int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+    
+    for(int i=coord.first;i<boundary_i;i++){
+        for(int j=coord.second;j<boundary_j;j++){
             //cerr << "waitinging on cell " << i << "-" << j  << " r: ";
             //cerr << wait(&gridCond[i][j], &gridMutex[i][j]) << endl;
             wait(&gridSem[i][j]);
@@ -90,8 +93,10 @@ void waitCells(pair<int,int>& coord, int si, int sj){
 
 // lock a dedicated grid area to gather cigbutts.
 void lockCells(pair<int,int>& coord, int si, int sj){ 
-    for(int i=coord.first;i<coord.first+si;i++){
-        for(int j=coord.second;j<coord.second+sj;j++){
+    int boundary_i = coord.first+si < n ? coord.first+si : n ;
+    int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+    for(int i=coord.first;i<boundary_i;i++){
+        for(int j=coord.second;j<boundary_j;j++){
             pthread_mutex_lock(&gridMutex[i][j]);
         }
     }
@@ -99,16 +104,20 @@ void lockCells(pair<int,int>& coord, int si, int sj){
 
 // unlock the area to let others to run.
 void unlockCells(pair<int,int>& coord, int si, int sj){
-    for(int i=coord.first;i<coord.first+si;i++){
-        for(int j=coord.second;j<coord.second+sj;j++){
+    int boundary_i = coord.first+si < n ? coord.first+si : n ;
+    int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+    for(int i=coord.first;i<boundary_i;i++){
+        for(int j=coord.second;j<boundary_j;j++){
             pthread_mutex_unlock(&gridMutex[i][j]);
         }
     }
 }
 
 void signalCells(pair<int,int>& coord, int si, int sj){ 
-    for(int i=coord.first;i<coord.first+si;i++){
-        for(int j=coord.second;j<coord.second+sj;j++){
+    int boundary_i = coord.first+si < n ? coord.first+si : n ;
+    int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+    for(int i=coord.first;i<boundary_i;i++){
+        for(int j=coord.second;j<boundary_j;j++){
             //signal(&gridCond[i][j]);
             signal(&gridSem[i][j]);
         }
@@ -118,9 +127,12 @@ void signalCells(pair<int,int>& coord, int si, int sj){
 
 void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
     int i,j;
+    int boundary_i = coord.first+si < n ? coord.first+si : n ;
+    int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+    //cerr << "G"<< gid << " started to clean area (" << coord.first << "," << coord.second << ") -> (" << coord.first + si -1 << "," << coord.second + sj -1 << ")."; 
     usleep(1000*tg);
-    for(i=coord.first;i<coord.first+si;i++){
-        for(j=coord.second;j<coord.second+sj;j++){
+    for(i=coord.first;i<boundary_i;i++){
+        for(j=coord.second;j<boundary_j;j++){
             while(grid[i][j] > 0){
                 usleep(1000*tg);
                 //cerr << "Gather one cigbutt from (" << i << "," << j << ")" << endl;
@@ -169,8 +181,9 @@ void *gatherer(void *arg){ //arguments: grid, private
     int si = p->si;
     int sj = p->sj;
     int tg = p->tg;
-
+    printPrivate(p);
     for(auto coord : p->areas){
+        //cerr << "G"<< p->gid <<" Waiting to enter (" << coord.first << "," << coord.second << ")." << endl; 
         //  is semaphores and locks doing same job? probably yes but inspect it.
         //  nevertheless, it's working right.
         
@@ -242,6 +255,8 @@ int main(){
         }
     }
 
+    // INPUT FOR PART II
+    /*
     int numberOfOrders; // number of orders
     vector<pair<int,string>> orders; // holds ms-order pairs
     cin >> numberOfOrders; 
@@ -252,25 +267,27 @@ int main(){
         cin >> ms >> command;
         orders.push_back(make_pair(ms,command));
     }
-    
+    */
+
+
     /// thread creating
     pthread_t tids[numberOfPrivates];
-
     for(int t=0;t<numberOfPrivates;t++){
         pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
         hw2_notify(GATHERER_CREATED, privates[t].gid, 0, 0);
     }
     
     // PART-II
+    /*
     pthread_t ctid;
     commanderInput inp;
     inp.orders = &orders;
     inp.tids = tids;
     pthread_create(&ctid,NULL,commander,(void*) &inp); 
-
+    */
     for(int t=0;t<numberOfPrivates;t++)
         pthread_join(tids[t],NULL);
-    pthread_join(ctid,NULL);
+    //pthread_join(ctid,NULL);
     cerr << "--------------------GRID--------------------- " << endl;
     printGrid();
 
