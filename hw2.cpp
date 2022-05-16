@@ -142,11 +142,17 @@ void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                 wait(&awake); // this awake and sleepReq method is working true for single thread, look for multiple
                 //usleep(1000*tg);
                 pthread_mutex_lock(&breakLock);
-                cerr << "G" << gid << ": Break = " << Break << endl;
+                //cerr << "G" << gid << ": Break = " << Break << endl;
                 if(Break){
-                    // unlock all cells here
                     pthread_mutex_unlock(&breakLock);
+                    // unlock all cells here
+                    signalCells(coord,si,sj);
+                    hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
                     wait(&awake);
+                    hw2_notify(GATHERER_CONTINUED,gid,0,0);
+                    //i = coord.first;
+                    //j = coord.second;
+                    waitCells(coord,si,sj);
                 }
                 else
                     pthread_mutex_unlock(&breakLock);
@@ -296,7 +302,7 @@ int main(){
     sem_init(&awake,0,1);
     /// thread creating
     pthread_t stid;
-    int a = 5000;
+    int a = 700;
     pthread_create(&stid,NULL,sleeper,(void*) &a);
 
     pthread_t tids[numberOfPrivates];
