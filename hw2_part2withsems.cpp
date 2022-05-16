@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <vector>
 #include <utility>
@@ -7,6 +6,7 @@
 #include <semaphore.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <unordered_map>
 #include "hw2_output.h"
 
 using namespace std;
@@ -23,7 +23,13 @@ typedef struct properPrivate{
 typedef struct commanderInput{
     vector<pair<int,string>>* orders;
     pthread_t* tids ;
+    int numberOfPrivates;
 } commanderInput;
+
+typedef struct sleeperInput{
+    int tg;
+    int gid;
+} sleeperInput;
 
 
 ////////// GLOBAL VARIABLES
@@ -33,11 +39,17 @@ int n,m; //  grid dimensions
 pthread_mutex_t** gridMutex; // mutexes for each cell in grid
 sem_t** gridSem; // semaphore for each cell
 
+sem_t *sleepSems;
+sem_t *awakeSems;
+
+unordered_map<int,sem_t*> sleepReq;
+unordered_map<int,sem_t*> awakeReq;
+
 pthread_mutex_t breakLock;
 int Break;
+sem_t contReq;
 
-sem_t sleepReq;
-sem_t awake;
+
 
 
 ///////// FUNCTIONS
@@ -45,6 +57,7 @@ sem_t awake;
 int signal(pthread_cond_t *cond){
     return pthread_cond_signal(cond);
 }  
+
 int wait(pthread_cond_t *cond, pthread_mutex_t *mutex){
     return pthread_cond_wait(cond,mutex);
 } 
@@ -89,7 +102,9 @@ void waitCells(pair<int,int>& coord, int si, int sj){
             wait(&gridSem[i][j]);
             /*int fd_out = open("out", O_WRONLY | O_APPEND | O_CREAT, 0777);
             dup2(fd_out,1);
+
             cout << "WAITING ON (" << i << "," << j << ")" <<  endl; 
+
             cout << "PROCEEDING ON (" << i << "," << j << ")" <<  endl; */
         }
     }
@@ -137,7 +152,7 @@ void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
     for(i=coord.first;i<boundary_i;i++){
         for(j=coord.second;j<boundary_j;j++){
             while(grid[i][j] > 0){
-                wait(&awake); // this awake and sleepReq method is working true for single thread, look for multiple
+                wait(awakeReq[gid]); // this awake and sleepReq method is working true for single thread, look for multiple
                 //usleep(1000*tg);
                 pthread_mutex_lock(&breakLock);
                 //cerr << "G" << gid << ": Break = " << Break << endl;
@@ -146,7 +161,7 @@ void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                     // unlock all cells here
                     signalCells(coord,si,sj);
                     hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
-                    wait(&awake);
+                    wait(&contReq); // awakeReqs are accumulating here, spend them before continue
                     hw2_notify(GATHERER_CONTINUED,gid,0,0);
                     //i = coord.first;
                     //j = coord.second;
@@ -156,14 +171,14 @@ void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                     pthread_mutex_unlock(&breakLock);
                 grid[i][j]--;
                 hw2_notify(GATHERER_GATHERED, gid, i, j);
-                signal(&sleepReq);
+                signal(sleepReq[gid]);
             }
         }
     }
     hw2_notify(GATHERER_CLEARED, gid, 0, 0);
 }
 
-void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
+void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids,int numberOfPrivates){
     int time = 0;
     int t;
     ///////////////////////////FOR PART2
@@ -174,6 +189,8 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
         if(!o.second.compare("break")){ // send break signal to all gatherers
             pthread_mutex_lock(&breakLock);
             Break = 1;
+            for(int i=0;i<numberOfPrivates;i++)
+                signal(&awakeSems[i]);            
             pthread_mutex_unlock(&breakLock);
             hw2_notify(ORDER_BREAK,0,0,0);
         }
@@ -181,7 +198,7 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
             pthread_mutex_lock(&breakLock);
             Break = 0;
             pthread_mutex_unlock(&breakLock);
-            signal(&awake);
+            signal(&contReq);
             hw2_notify(ORDER_CONTINUE,0,0,0);
         }
         else if(!o.second.compare("stop")){ // send stop signal to all gatherers
@@ -232,15 +249,17 @@ void *gatherer(void *arg){ //arguments: grid, private
 
 void *commander(void* arg){
     commanderInput* inp = (commanderInput*) arg;
-    executeOrders(*(inp->orders),inp->tids);
+    executeOrders(*(inp->orders),inp->tids,inp->numberOfPrivates);
 }
 
 void *sleeper(void* arg){
-    int tg = *((int*) arg);
+    sleeperInput* sinp = (sleeperInput*) arg;
+    int tg = sinp->tg;
+    int gid = sinp->gid;
     while(1){
-        wait(&sleepReq);
+        wait(sleepReq[gid]);
         usleep(1000*tg);
-        signal(&awake);
+        signal(awakeReq[gid]);
     }
 }
 
@@ -294,14 +313,32 @@ int main(){
         cin >> ms >> command;
         orders.push_back(make_pair(ms,command));
     }
+
     
+    sleepSems = new sem_t[numberOfPrivates];
+    awakeSems = new sem_t[numberOfPrivates];
+
+    for(int i=0;i<numberOfPrivates;i++){
+        sleepReq[privates[i].gid] = &sleepSems[i];
+        awakeReq[privates[i].gid] = &awakeSems[i];
+    }
+
     Break = 0;
-    sem_init(&sleepReq,0,0);
-    sem_init(&awake,0,1);
+    
+    for(int i=0;i<numberOfPrivates;i++){
+        sem_init(&sleepSems[i],0,0);
+        sem_init(&awakeSems[i],0,1);
+    }
+    
+    sem_init(&contReq,0,0);
     /// thread creating
-    pthread_t stid;
-    int a = 700;
-    pthread_create(&stid,NULL,sleeper,(void*) &a);
+    pthread_t stid[numberOfPrivates];
+    for(int s=0;s<numberOfPrivates;s++){
+        sleeperInput sinp;
+        sinp.gid = privates[s].gid;
+        sinp.tg = privates[s].tg;
+        pthread_create(&stid[s],NULL,sleeper,(void*) &sinp);
+    }
 
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
@@ -315,6 +352,7 @@ int main(){
     commanderInput inp;
     inp.orders = &orders;
     inp.tids = tids;
+    inp.numberOfPrivates = numberOfPrivates;
     pthread_create(&ctid,NULL,commander,(void*) &inp); 
     
     for(int t=0;t<numberOfPrivates;t++)
