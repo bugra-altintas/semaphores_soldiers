@@ -32,6 +32,12 @@ int n,m; //  grid dimensions
 pthread_mutex_t** gridMutex; // mutexes for each cell in grid
 sem_t** gridSem; // semaphore for each cell
 
+pthread_mutex_t breakLock;
+int Break;
+
+sem_t sleepReq;
+sem_t awake;
+
 
 ///////// FUNCTIONS
 /*
@@ -124,20 +130,29 @@ void signalCells(pair<int,int>& coord, int si, int sj){
     }
 }
 
-
 void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
     int i,j;
     int boundary_i = coord.first+si < n ? coord.first+si : n ;
     int boundary_j = coord.second+sj < m ? coord.second+sj : m;
-    //cerr << "G"<< gid << " started to clean area (" << coord.first << "," << coord.second << ") -> (" << coord.first + si -1 << "," << coord.second + sj -1 << ")."; 
+    int localBreak = 0;
     usleep(1000*tg);
     for(i=coord.first;i<boundary_i;i++){
         for(j=coord.second;j<boundary_j;j++){
             while(grid[i][j] > 0){
-                usleep(1000*tg);
-                //cerr << "Gather one cigbutt from (" << i << "," << j << ")" << endl;
+                wait(&awake); // this awake and sleepReq method is working true for single thread, look for multiple
+                //usleep(1000*tg);
+                pthread_mutex_lock(&breakLock);
+                cerr << "G" << gid << ": Break = " << Break << endl;
+                if(Break){
+                    // unlock all cells here
+                    pthread_mutex_unlock(&breakLock);
+                    wait(&awake);
+                }
+                else
+                    pthread_mutex_unlock(&breakLock);
                 grid[i][j]--;
                 hw2_notify(GATHERER_GATHERED, gid, i, j);
+                signal(&sleepReq);
             }
         }
     }
@@ -147,29 +162,31 @@ void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
 void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
     int time = 0;
     int t;
-    if(fork() == 0){ // child process to send signals ///////////////////////////FOR PART2
-        for(auto o: orders){
-            t = o.first - time;
-            usleep(t*1000);
-            time = o.first;
-            if(!o.second.compare("break")){ // send break signal to all gatherers
-
-                hw2_notify(ORDER_BREAK,0,0,0);
-            }
-            else if(!o.second.compare("continue")){ // send continue signal to all gatherers
-
-                hw2_notify(ORDER_CONTINUE,0,0,0);
-            }
-            else if(!o.second.compare("stop")){ // send stop signal to all gatherers
-
-                hw2_notify(ORDER_STOP,0,0,0);
-            }
-            else
-                cerr << "INVALID ORDER" << endl;
+    ///////////////////////////FOR PART2
+    for(auto o: orders){
+        t = o.first - time;
+        usleep(t*1000);
+        time = o.first;
+        if(!o.second.compare("break")){ // send break signal to all gatherers
+            pthread_mutex_lock(&breakLock);
+            Break = 1;
+            pthread_mutex_unlock(&breakLock);
+            hw2_notify(ORDER_BREAK,0,0,0);
         }
-        return;
+        else if(!o.second.compare("continue")){ // send continue signal to all gatherers
+            pthread_mutex_lock(&breakLock);
+            Break = 0;
+            pthread_mutex_unlock(&breakLock);
+            signal(&awake);
+            hw2_notify(ORDER_CONTINUE,0,0,0);
+        }
+        else if(!o.second.compare("stop")){ // send stop signal to all gatherers
+
+            hw2_notify(ORDER_STOP,0,0,0);
+        }
+        else
+            cerr << "INVALID ORDER" << endl;
     }
-    return;
 }
 
 
@@ -177,13 +194,11 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
 
 void *gatherer(void *arg){ //arguments: grid, private
     Private* p = (Private*) arg;
-    //cerr << "GID: " <<  p->gid << endl;
+    cerr << "GID: " <<  p->gid << endl;
     int si = p->si;
     int sj = p->sj;
     int tg = p->tg;
-    printPrivate(p);
-    for(auto coord : p->areas){
-        //cerr << "G"<< p->gid <<" Waiting to enter (" << coord.first << "," << coord.second << ")." << endl; 
+    for(auto coord : p->areas){ 
         //  is semaphores and locks doing same job? probably yes but inspect it.
         //  nevertheless, it's working right.
         
@@ -216,6 +231,14 @@ void *commander(void* arg){
     executeOrders(*(inp->orders),inp->tids);
 }
 
+void *sleeper(void* arg){
+    int tg = *((int*) arg);
+    while(1){
+        wait(&sleepReq);
+        usleep(1000*tg);
+        signal(&awake);
+    }
+}
 
 
 int main(){
@@ -256,7 +279,7 @@ int main(){
     }
 
     // INPUT FOR PART II
-    /*
+    
     int numberOfOrders; // number of orders
     vector<pair<int,string>> orders; // holds ms-order pairs
     cin >> numberOfOrders; 
@@ -267,10 +290,15 @@ int main(){
         cin >> ms >> command;
         orders.push_back(make_pair(ms,command));
     }
-    */
-
-
+    
+    Break = 0;
+    sem_init(&sleepReq,0,0);
+    sem_init(&awake,0,1);
     /// thread creating
+    pthread_t stid;
+    int a = 5000;
+    pthread_create(&stid,NULL,sleeper,(void*) &a);
+
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
         pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
@@ -278,16 +306,16 @@ int main(){
     }
     
     // PART-II
-    /*
+    
     pthread_t ctid;
     commanderInput inp;
     inp.orders = &orders;
     inp.tids = tids;
     pthread_create(&ctid,NULL,commander,(void*) &inp); 
-    */
+    
     for(int t=0;t<numberOfPrivates;t++)
         pthread_join(tids[t],NULL);
-    //pthread_join(ctid,NULL);
+    pthread_join(ctid,NULL);
     cerr << "--------------------GRID--------------------- " << endl;
     printGrid();
 
