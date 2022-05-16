@@ -259,7 +259,11 @@ void *sleeper(void* arg){
     while(1){
         wait(sleepReq[gid]);
         usleep(1000*tg);
-        signal(awakeReq[gid]);
+        pthread_mutex_lock(&breakLock);
+        if(!Break){
+            signal(awakeReq[gid]);
+        }
+        pthread_mutex_unlock(&breakLock);
     }
 }
 

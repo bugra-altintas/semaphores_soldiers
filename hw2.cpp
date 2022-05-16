@@ -7,6 +7,7 @@
 #include <semaphore.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/time.h>
 #include "hw2_output.h"
 
 using namespace std;
@@ -34,7 +35,11 @@ pthread_mutex_t** gridMutex; // mutexes for each cell in grid
 sem_t** gridSem; // semaphore for each cell
 
 pthread_mutex_t breakLock;
+pthread_cond_t cvBreak = PTHREAD_COND_INITIALIZER;
 int Break;
+
+pthread_mutex_t contLock;
+pthread_cond_t cvCont = PTHREAD_COND_INITIALIZER;
 
 sem_t sleepReq;
 sem_t awake;
@@ -87,6 +92,12 @@ void waitCells(pair<int,int>& coord, int si, int sj){
             //cerr << "waitinging on cell " << i << "-" << j  << " r: ";
             //cerr << wait(&gridCond[i][j], &gridMutex[i][j]) << endl;
             wait(&gridSem[i][j]);
+            /*pthread_mutex_lock(&breakLock);
+            if(Break){
+                hw2_notify(GATHERER_TOOK_BREAK,0,0,0);
+                //unlock the area that locked to now
+            }
+            pthread_mutex_unlock(&breakLock);*/
             /*int fd_out = open("out", O_WRONLY | O_APPEND | O_CREAT, 0777);
             dup2(fd_out,1);
             cout << "WAITING ON (" << i << "," << j << ")" <<  endl; 
@@ -128,41 +139,70 @@ void signalCells(pair<int,int>& coord, int si, int sj){
     }
 }
 
-void cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
+int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
     int i,j;
     int boundary_i = coord.first+si < n ? coord.first+si : n ;
     int boundary_j = coord.second+sj < m ? coord.second+sj : m;
     int localBreak = 0;
-    usleep(1000*tg);
+    int tw;
+    //usleep(1000*tg);
     for(i=coord.first;i<boundary_i;i++){
         for(j=coord.second;j<boundary_j;j++){
             while(grid[i][j] > 0){
-                wait(&awake); // this awake and sleepReq method is working true for single thread, look for multiple
-                //usleep(1000*tg);
+                struct timeval current_time;// sleeping time calculations
+                struct timespec waiting_time;
+                gettimeofday(&current_time, NULL);
+                waiting_time.tv_sec = current_time.tv_sec;
+                long long nsec = current_time.tv_usec*1000;
+                nsec += tg*1000000;
+                waiting_time.tv_sec += nsec / 1000000000L;  
+                waiting_time.tv_nsec = nsec % 1000000000L;
+                //cerr << "G" << gid << " is about the get the break lock" << endl;
                 pthread_mutex_lock(&breakLock);
-                //cerr << "G" << gid << ": Break = " << Break << endl;
-                if(Break){
-                    pthread_mutex_unlock(&breakLock);
-                    // unlock all cells here
-                    signalCells(coord,si,sj);
-                    hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
-                    wait(&awake);
-                    hw2_notify(GATHERER_CONTINUED,gid,0,0);
-                    //i = coord.first;
-                    //j = coord.second;
-                    waitCells(coord,si,sj);
+                //cerr << "G" << gid << " has the break lock" << endl;
+                while(!Break){// NOT SURE IF THIS IS NECESSARY
+                    tw = pthread_cond_timedwait(&cvBreak,&breakLock,&waiting_time);
+                    if(tw == ETIMEDOUT){// not on a break  
+                        break;  
+                    }
+                    else{
+                        pthread_mutex_unlock(&breakLock);
+                        hw2_notify(GATHERER_TOOK_BREAK, gid, 0, 0);
+                        signalCells(coord,si,sj);
+                        pthread_mutex_lock(&contLock);
+                        pthread_cond_wait(&cvCont,&contLock);
+                        pthread_mutex_unlock(&contLock);
+                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        return 1;
+                    }
                 }
-                else
-                    pthread_mutex_unlock(&breakLock);
+                pthread_mutex_unlock(&breakLock);
+                // this awake and sleepReq method is working true for single thread, look for multiple
+                //usleep(1000*tg);
                 grid[i][j]--;
                 hw2_notify(GATHERER_GATHERED, gid, i, j);
-                signal(&sleepReq);
             }
         }
     }
     hw2_notify(GATHERER_CLEARED, gid, 0, 0);
+    return 0;
 }
-
+/*
+cerr << "xxxxxxxxxxxxxxxx" << endl;
+                pthread_cond_timedwait(&cvBreak,&breakLock,&waiting_time);
+                if(Break){
+                    cerr << "BBBBBBBBBBBBBBBBBBB" <<endl;
+                    pthread_mutex_unlock(&breakLock);
+                    hw2_notify(GATHERER_TOOK_BREAK, gid, 0, 0);
+                    // wait on continueCond
+                    pthread_mutex_lock(&contLock);
+                    pthread_cond_wait(&cvCont,&contLock);
+                    pthread_mutex_unlock(&contLock);
+                    hw2_notify(GATHERER_CONTINUED, gid, 0, 0);
+                }
+                else
+                    pthread_mutex_unlock(&breakLock);
+*/
 void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
     int time = 0;
     int t;
@@ -175,13 +215,16 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
             pthread_mutex_lock(&breakLock);
             Break = 1;
             pthread_mutex_unlock(&breakLock);
+            pthread_cond_broadcast(&cvBreak);
             hw2_notify(ORDER_BREAK,0,0,0);
         }
         else if(!o.second.compare("continue")){ // send continue signal to all gatherers
             pthread_mutex_lock(&breakLock);
+            if(Break){
+                pthread_cond_broadcast(&cvCont);
+            }
             Break = 0;
             pthread_mutex_unlock(&breakLock);
-            signal(&awake);
             hw2_notify(ORDER_CONTINUE,0,0,0);
         }
         else if(!o.second.compare("stop")){ // send stop signal to all gatherers
@@ -198,31 +241,35 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
 
 void *gatherer(void *arg){ //arguments: grid, private
     Private* p = (Private*) arg;
-    cerr << "GID: " <<  p->gid << endl;
     int si = p->si;
     int sj = p->sj;
     int tg = p->tg;
-    for(auto coord : p->areas){ 
-        //  is semaphores and locks doing same job? probably yes but inspect it.
-        //  nevertheless, it's working right.
-        
-        // WAIT FOR ALL CELLS IN THE AREA
-        waitCells(coord, si, sj);
+    int restartReq = 1;
+    while(restartReq){
+        restartReq = 0;
+        for(auto coord : p->areas){ 
+            //  is semaphores and locks doing same job? probably yes but inspect it.
+            //  nevertheless, it's working right.
+            
+            // WAIT FOR ALL CELLS IN THE AREA
+            waitCells(coord, si, sj);
 
-        // LOCK THE AREA
-        //lockCells(coord, si, sj);
+            // LOCK THE AREA
+            //lockCells(coord, si, sj);
 
-        hw2_notify(GATHERER_ARRIVED, p->gid, coord.first, coord.second);
-        
-        // CLEAN AREA
-        cleanArea(coord, si, sj, tg, p->gid);
+            hw2_notify(GATHERER_ARRIVED, p->gid, coord.first, coord.second);
+            
+            // CLEAN AREA
+            restartReq = cleanArea(coord, si, sj, tg, p->gid);
+            if(restartReq) break;
+            // UNLOCK THE AREA
+            //unlockCells(coord, si ,sj);
 
-        // UNLOCK THE AREA
-        //unlockCells(coord, si ,sj);
-
-        // SIGNAL FOR ALL CELLS IN THE AREA
-        signalCells(coord, si, sj);
+            // SIGNAL FOR ALL CELLS IN THE AREA
+            signalCells(coord, si, sj);
+        }
     }
+    
 
     hw2_notify(GATHERER_EXITED, p->gid, 0, 0);
 
@@ -233,15 +280,6 @@ void *gatherer(void *arg){ //arguments: grid, private
 void *commander(void* arg){
     commanderInput* inp = (commanderInput*) arg;
     executeOrders(*(inp->orders),inp->tids);
-}
-
-void *sleeper(void* arg){
-    int tg = *((int*) arg);
-    while(1){
-        wait(&sleepReq);
-        usleep(1000*tg);
-        signal(&awake);
-    }
 }
 
 
@@ -294,14 +332,6 @@ int main(){
         cin >> ms >> command;
         orders.push_back(make_pair(ms,command));
     }
-    
-    Break = 0;
-    sem_init(&sleepReq,0,0);
-    sem_init(&awake,0,1);
-    /// thread creating
-    pthread_t stid;
-    int a = 700;
-    pthread_create(&stid,NULL,sleeper,(void*) &a);
 
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
