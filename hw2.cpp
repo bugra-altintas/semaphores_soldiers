@@ -30,8 +30,10 @@ typedef struct commanderInput{
 ////////// GLOBAL VARIABLES
 
 int **grid; // grid
+int **numOfGatherers; // if there is a gatherer
 int n,m; //  grid dimensions
 pthread_mutex_t** gridMutex; // mutexes for each cell in grid
+pthread_mutex_t checkMutex;
 sem_t** gridSem; // semaphore for each cell
 
 pthread_mutex_t breakLock;
@@ -86,6 +88,43 @@ void printGrid(){
 void waitCells(pair<int,int>& coord, int si, int sj){ 
     int boundary_i = coord.first+si < n ? coord.first+si : n ;
     int boundary_j = coord.second+sj < m ? coord.second+sj : m;
+
+    bool entryFlag = true;
+    int criticalCell_i,criticalCell_j;
+    /*
+    pthread_mutex_lock(&checkMutex);
+    for(int i=coord.first;i<boundary_i;i++){
+        for(int j= coord.second;j<boundary_j;j++){
+            if(numOfGatherers[i][j] + 1 != 1){
+                entryFlag = false;
+                criticalCell_i = i;
+                criticalCell_j = j;
+            }
+        }
+    }
+    if(entryFlag){// we can lock all cells
+        for(int i=coord.first;i<boundary_i;i++){
+            for(int j= coord.second;j<boundary_j;j++){
+                wait(&gridSem[i][j]);
+                numOfGatherers[i][j]++;
+            }
+        }
+        pthread_mutex_unlock(&checkMutex);
+    }
+    else{// wait on critical cell, then wait on all cells
+        pthread_mutex_unlock(&checkMutex);
+        wait(&gridSem[criticalCell_i][criticalCell_j]);
+        // we may need one more check here
+        for(int i=coord.first;i<boundary_i;i++){
+            for(int j= coord.second;j<boundary_j;j++){
+                if(i!= criticalCell_i && j!=criticalCell_j)
+                    wait(&gridSem[i][j]);
+                numOfGatherers[i][j]++;
+            }
+        }        
+    }
+    */
+
     
     for(int i=coord.first;i<boundary_i;i++){
         for(int j=coord.second;j<boundary_j;j++){
@@ -134,6 +173,9 @@ void signalCells(pair<int,int>& coord, int si, int sj){
     for(int i=coord.first;i<boundary_i;i++){
         for(int j=coord.second;j<boundary_j;j++){
             //signal(&gridCond[i][j]);
+            /*pthread_mutex_lock(&checkMutex);
+            numOfGatherers[i][j]--;
+            pthread_mutex_unlock(&checkMutex);*/
             signal(&gridSem[i][j]);
         }
     }
@@ -167,8 +209,8 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                     }
                     else{
                         pthread_mutex_unlock(&breakLock);
+                        signalCells(coord,si,sj); //unlock all cells
                         hw2_notify(GATHERER_TOOK_BREAK, gid, 0, 0);
-                        signalCells(coord,si,sj);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
                         pthread_mutex_unlock(&contLock);
@@ -290,14 +332,17 @@ int main(){
     hw2_init_notifier();
     cin >> n >> m;
     grid = new int*[n];
+    numOfGatherers = new int*[n];
     gridMutex = new pthread_mutex_t*[n];
     gridSem = new sem_t*[n];
     for(int i=0;i<n;i++){ // Cigbutt counts
         grid[i] = new int[m];
+        numOfGatherers[i] = new int[m];
         gridMutex[i] = new pthread_mutex_t[m];
         gridSem[i] = new sem_t[m];
         for(int j=0;j<m;j++){
             cin >> grid[i][j];
+            numOfGatherers[i][j] = 0;
             pthread_mutex_init(&gridMutex[i][j], NULL); 
             sem_init(&gridSem[i][j],0,1); 
         }
