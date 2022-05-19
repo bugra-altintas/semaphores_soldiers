@@ -1,1 +1,4 @@
 case1 -> solved
+case2 -> solved
+case3 -> solved
+case4 -> solved(bence)
