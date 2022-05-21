@@ -40,39 +40,35 @@ typedef struct smoker{
 } Smoker;
 
 
-
 ////////// GLOBAL VARIABLES
 
 int **grid; // grid
-int **numOfGatherers; // if there is a gatherer
 int n,m; //  grid dimensions
-pthread_mutex_t gridMutex; // mutexes for each cell in grid
 sem_t** gridSem; // semaphore for each cell
-pthread_cond_t*** cvAvailable;
-pthread_mutex_t availableLock;
 
-pthread_mutex_t breakLock;
-pthread_cond_t cvBreak = PTHREAD_COND_INITIALIZER;
-int Break;
-int Stop;
+pthread_cond_t*** cvGatherer; // availability of the cells, whether a cell includes a gatherer
+pthread_mutex_t availableGathererLock; // lock for cvGatherer
 
-pthread_mutex_t contLock;
-pthread_cond_t cvCont = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t breakLock; // lock for cvBreak
+pthread_cond_t cvBreak = PTHREAD_COND_INITIALIZER; // cv that is signaled when a break or stop order comes
+int Break; // 1 if a break order executed
+int Stop; // 1 if a stop order executed
 
-//pthread_mutex_t dummyLock;
+pthread_mutex_t contLock; // lock for cvCont
+pthread_cond_t cvCont = PTHREAD_COND_INITIALIZER; // cv is signaled when a continue order comes
 
-pthread_cond_t*** cvAvailableForSmoke;
-pthread_mutex_t smokeLock;
+pthread_cond_t*** cvSmoker; // availability of the cells, whether a cell includes a smoker
+pthread_mutex_t availableSmokerLock; // lock for cvSmoker
 
-///////// FUNCTIONS
-/*
-int signal(pthread_cond_t *cond){
-    return pthread_cond_signal(cond);
-}  
-int wait(pthread_cond_t *cond, pthread_mutex_t *mutex){
-    return pthread_cond_wait(cond,mutex);
-} 
-*/
+pthread_cond_t*** cvLittering; // availability of the cell, whether a cell is in a littering area
+pthread_mutex_t availableLitteringLock; // lock for cvLittering
+
+int **gridLitter; // number of littering smokers at the same time
+pthread_mutex_t leaveSmokeLock;
+
+pthread_mutex_t smokeMutex;
+
+///////////////// FUNCTIONS
 
 int signal(sem_t* s){
     return sem_post(s);
@@ -102,78 +98,299 @@ void printGrid(){
     }
 }
 
-int waitCells(pair<int,int>& coord, int si, int sj, int gid){ 
+int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gatherers' area, smokers' cells, smokers' littering area
     int boundary_i = coord.first+si < n ? coord.first+si : n ;
     int boundary_j = coord.second+sj < m ? coord.second+sj : m;
     bool checkAgain = true;
 
-    
+    // check cvGatherer: checking if all cells are free
     while(checkAgain){
         checkAgain = false;
-        // check cvAvailable: checking if all cells are free of gatherer
-        pthread_mutex_lock(&availableLock);
+        pthread_mutex_lock(&availableGathererLock);
+        pthread_mutex_lock(&availableSmokerLock);
+        pthread_mutex_lock(&availableLitteringLock);
         for(int i=coord.first;i<boundary_i;i++){
             for(int j=coord.second;j<boundary_j;j++){
-                if(cvAvailable[i][j] == NULL)
+                if(cvGatherer[i][j] == NULL && cvSmoker[i][j] == NULL && cvLittering[i][j] == NULL)
                     continue;
-                pthread_cond_wait(cvAvailable[i][j],&availableLock);// unlocks the lock before blocking, locks after returning
-                
-                pthread_mutex_lock(&breakLock);
-                if(Stop){
+                if(cvGatherer[i][j] != NULL){
+                    pthread_mutex_unlock(&availableSmokerLock);
+                    pthread_mutex_unlock(&availableLitteringLock);
+                    pthread_cond_wait(cvGatherer[i][j],&availableGathererLock);// unlocks the lock before blocking, locks after returning
+
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){
+                        pthread_mutex_unlock(&breakLock);
+                        pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        //pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        return 2;
+                    }
+                    else if(Break){
+                        pthread_mutex_unlock(&breakLock);
+                        pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        //pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        pthread_mutex_lock(&contLock);
+                        pthread_cond_wait(&cvCont,&contLock);
+                        pthread_mutex_unlock(&contLock);
+                        
+                        pthread_mutex_lock(&breakLock);
+                        if(Stop){ // may a stop order can come while we were on a break
+                            pthread_mutex_unlock(&breakLock);
+                            //pthread_mutex_unlock(&availableGathererLock);
+                            //pthread_mutex_unlock(&availableSmokerLock);
+                            //pthread_mutex_unlock(&availableLitteringLock);
+                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            return 2;
+                        }
+                        pthread_mutex_unlock(&breakLock);
+                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        return 1;
+                    }
                     pthread_mutex_unlock(&breakLock);
-                    pthread_mutex_unlock(&availableLock);
-                    hw2_notify(GATHERER_STOPPED,gid,0,0);
-                    return 2;
+                    pthread_mutex_unlock(&availableGathererLock);
+                    checkAgain = true;
+                    break;
                 }
-                else if(Break){
+                if(cvSmoker[i][j] != NULL){
+                    //cerr << "G" << gid << "is waiting on " << i << " - " << j  << " for a smoker" << endl;
+                    pthread_mutex_unlock(&availableGathererLock);
+                    pthread_mutex_unlock(&availableLitteringLock);
+                    pthread_cond_wait(cvSmoker[i][j],&availableSmokerLock);
+
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){
+                        pthread_mutex_unlock(&breakLock);
+                        //pthread_mutex_unlock(&availableGathererLock);
+                        pthread_mutex_unlock(&availableSmokerLock);
+                        //pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        return 2;
+                    }
+                    else if(Break){
+                        pthread_mutex_unlock(&breakLock);
+                        //pthread_mutex_unlock(&availableGathererLock);
+                        pthread_mutex_unlock(&availableSmokerLock);
+                        pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        pthread_mutex_lock(&contLock);
+                        pthread_cond_wait(&cvCont,&contLock);
+                        pthread_mutex_unlock(&contLock);
+                        pthread_mutex_lock(&breakLock);
+                        if(Stop){ // may a stop order can come while we were on a break
+                            pthread_mutex_unlock(&breakLock);
+                            pthread_mutex_unlock(&availableGathererLock);
+                            //pthread_mutex_unlock(&availableSmokerLock);
+                            //pthread_mutex_unlock(&availableLitteringLock);
+                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            return 2;
+                        }
+                        pthread_mutex_unlock(&breakLock);
+                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        return 1;
+                    }
                     pthread_mutex_unlock(&breakLock);
-                    pthread_mutex_unlock(&availableLock);
-                    hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
-                    pthread_mutex_lock(&contLock);
-                    pthread_cond_wait(&cvCont,&contLock);
-                    pthread_mutex_unlock(&contLock);
-                    hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
-                    return 1;
+                    pthread_mutex_unlock(&availableSmokerLock);
+                    checkAgain = true;
+                    break;
                 }
-                else
+                if(cvLittering[i][j]!=NULL){
+                    //cerr << "G" << gid << "is waiting on " << i << " - " << j  << " for a littering cell" << endl;
+                    pthread_mutex_unlock(&availableGathererLock);
+                    pthread_mutex_unlock(&availableSmokerLock);
+                    pthread_cond_wait(cvLittering[i][j],&availableLitteringLock);
+
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){
+                        pthread_mutex_unlock(&breakLock);
+                        //pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        return 2;
+                    }
+                    else if(Break){
+                        pthread_mutex_unlock(&breakLock);
+                        //pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        pthread_mutex_lock(&contLock);
+                        pthread_cond_wait(&cvCont,&contLock);
+                        pthread_mutex_unlock(&contLock);
+                        pthread_mutex_lock(&breakLock);
+                        if(Stop){ // may a stop order can come while we were on a break
+                            pthread_mutex_unlock(&breakLock);
+                            pthread_mutex_unlock(&availableGathererLock);
+                            //pthread_mutex_unlock(&availableSmokerLock);
+                            //pthread_mutex_unlock(&availableLitteringLock);
+                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            return 2;
+                        }
+                        pthread_mutex_unlock(&breakLock);
+                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        return 1;
+                    }
                     pthread_mutex_unlock(&breakLock);
-                checkAgain = true;
-                break;
+                    pthread_mutex_unlock(&availableLitteringLock);
+                    checkAgain = true;
+                    break;
+                }
             }
             if(checkAgain) break;
         }
-        pthread_mutex_unlock(&availableLock);
-        if(checkAgain) continue;
-        // check cvAvailableForSmoke: checking if all cells are free of smoker
+        pthread_mutex_unlock(&availableGathererLock);
+        pthread_mutex_unlock(&availableSmokerLock);
+        pthread_mutex_unlock(&availableLitteringLock);
     }
-
-    pthread_mutex_lock(&availableLock);
     for(int i=coord.first;i<boundary_i;i++){
         for(int j=coord.second;j<boundary_j;j++){
             wait(&gridSem[i][j]);
-            cvAvailable[i][j] = new pthread_cond_t;
-            pthread_cond_init(cvAvailable[i][j],NULL);
+            pthread_mutex_lock(&availableGathererLock);
+            cvGatherer[i][j] = new pthread_cond_t;
+            pthread_cond_init(cvGatherer[i][j],NULL);
+            pthread_mutex_unlock(&availableGathererLock);
         }
     }
-    pthread_mutex_unlock(&availableLock);
     return 0;
+}
+
+bool waitForSmoke(int ik, int jk, int sid){ // wait for gatherers' area and smokers' cells
+
+    bool checkAgain = true;
+    while(checkAgain){
+        //cerr << "S" << sid << " checking again " << endl;
+        checkAgain = false;
+        pthread_mutex_lock(&availableGathererLock);
+        pthread_mutex_lock(&availableSmokerLock);
+        for(int i=ik-1;i<=ik+1;i++){
+            for(int j=jk-1;j<=jk+1;j++){
+                //cerr << "S" << sid << ": " << i << " - " << j <<": " << (cvGatherer[i][j] == NULL) << " && " << (cvSmoker[i][j] == NULL) << endl;
+                if(cvGatherer[i][j] == NULL && cvSmoker[i][j] == NULL)
+                    continue;
+                if(i==ik && j== jk && cvSmoker[i][j]!=NULL){
+                    //cerr << "S" << sid << " is waiting for a smoker at: " << i << " - " << j  << endl;
+                    pthread_mutex_unlock(&availableGathererLock);
+                    pthread_cond_wait(cvSmoker[i][j],&availableSmokerLock);
+                    // stop order
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){
+                        pthread_mutex_unlock(&breakLock);
+                        pthread_mutex_unlock(&availableSmokerLock);
+                        //pthread_mutex_unlock(&availableGathererLock);
+                        hw2_notify(SNEAKY_SMOKER_STOPPED,sid,0,0);
+                        return false;
+                    }
+                    pthread_mutex_unlock(&breakLock);
+                    pthread_mutex_unlock(&availableSmokerLock);
+                    checkAgain = true;
+                    break;
+                }
+                
+                if(cvGatherer[i][j] != NULL){ 
+                    //cerr << "S" << sid << " is waiting for a gatherer at: " << i << " - " << j  << endl;
+                    pthread_mutex_unlock(&availableSmokerLock);
+                    pthread_cond_wait(cvGatherer[i][j],&availableGathererLock);
+
+                    //cerr << "S" << sid << " going to smoke!! at " << i <<" - " << j<< endl;
+                    // stop order
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){
+                        pthread_mutex_unlock(&breakLock);
+                        pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        hw2_notify(SNEAKY_SMOKER_STOPPED,sid,0,0);
+                        return false;
+                    }
+                    pthread_mutex_unlock(&breakLock);
+                    pthread_mutex_unlock(&availableGathererLock);
+                    checkAgain = true;
+                    break;
+                }
+                
+            }
+            if(checkAgain) break;
+        }
+        pthread_mutex_unlock(&availableSmokerLock);
+        pthread_mutex_unlock(&availableGathererLock);
+    }
+
+
+    // all the area is okey, lock it
+    pthread_mutex_lock(&availableLitteringLock);
+    pthread_mutex_lock(&availableSmokerLock);
+    for(int i = ik-1;i<=ik+1;i++){
+        for(int j=jk-1;j<=jk+1;j++){
+            if(i==ik && j==jk){
+                cvSmoker[i][j] = new pthread_cond_t;
+                pthread_cond_init(cvSmoker[i][j],NULL);
+                pthread_mutex_unlock(&availableSmokerLock);
+                continue;
+            }
+            pthread_mutex_lock(&leaveSmokeLock);
+            if(++gridLitter[i][j] == 1){
+                pthread_mutex_unlock(&leaveSmokeLock);
+                cvLittering[i][j] = new pthread_cond_t;
+                pthread_cond_init(cvLittering[i][j],NULL);
+            }
+            else
+                pthread_mutex_unlock(&leaveSmokeLock);
+        }
+    }
+    pthread_mutex_unlock(&availableLitteringLock);
+    return true;
 }
 
 void signalCells(pair<int,int>& coord, int si, int sj,int gid){ 
     int boundary_i = coord.first+si < n ? coord.first+si : n ;
     int boundary_j = coord.second+sj < m ? coord.second+sj : m;
-    pthread_mutex_lock(&availableLock);
+    pthread_mutex_lock(&availableGathererLock);
     for(int i=coord.first;i<boundary_i;i++){
         for(int j=coord.second;j<boundary_j;j++){
-            pthread_cond_broadcast(cvAvailable[i][j]);
+            pthread_cond_broadcast(cvGatherer[i][j]);
             //cerr << "G" << gid << " signaled " << i << "x" << j << endl;
             signal(&gridSem[i][j]);
-            pthread_cond_destroy(cvAvailable[i][j]);
-            cvAvailable[i][j] = NULL;
+            pthread_cond_destroy(cvGatherer[i][j]);
+            cvGatherer[i][j] = NULL;
             
         }
     }
-    pthread_mutex_unlock(&availableLock);
+    pthread_mutex_unlock(&availableGathererLock);
+}
+
+void signalAfterSmoke(int ik, int jk, int sid, bool destroy){
+    pthread_mutex_lock(&availableLitteringLock);
+    pthread_mutex_lock(&availableSmokerLock);
+    for(int i= ik-1;i<=ik+1;i++){
+        for(int j=jk-1;j<=jk+1;j++){
+            if(i==ik && j==jk){
+                pthread_cond_broadcast(cvSmoker[i][j]);
+                if(!destroy) continue;
+                pthread_cond_destroy(cvSmoker[i][j]);
+                cvSmoker[i][j] = NULL;
+                pthread_mutex_unlock(&availableSmokerLock);
+                continue;
+            }
+            if(!destroy){
+                pthread_cond_broadcast(cvLittering[i][j]);
+                continue;
+            }
+            pthread_mutex_lock(&leaveSmokeLock);
+            if(--gridLitter[i][j] == 0){
+                pthread_mutex_unlock(&leaveSmokeLock);
+                pthread_cond_broadcast(cvLittering[i][j]);
+                pthread_cond_destroy(cvLittering[i][j]);
+                cvLittering[i][j] = NULL;
+            }
+            else
+                pthread_mutex_unlock(&leaveSmokeLock);
+        }
+    }
+    pthread_mutex_unlock(&availableLitteringLock);
+    pthread_mutex_unlock(&availableSmokerLock);
 }
 
 int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
@@ -207,6 +424,16 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                     pthread_mutex_lock(&contLock);
                     pthread_cond_wait(&cvCont,&contLock);
                     pthread_mutex_unlock(&contLock);
+                    pthread_mutex_lock(&breakLock);
+                    if(Stop){ // may a stop order can come while we were on a break
+                        pthread_mutex_unlock(&breakLock);
+                        pthread_mutex_unlock(&availableGathererLock);
+                        //pthread_mutex_unlock(&availableSmokerLock);
+                        //pthread_mutex_unlock(&availableLitteringLock);
+                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        return 2;
+                    }
+                    pthread_mutex_unlock(&breakLock);
                     hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
                     return 1;
                 }
@@ -217,6 +444,84 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
     }
     hw2_notify(GATHERER_CLEARED, gid, 0, 0);
     return 0;
+}
+
+bool smokeCigs(int ik, int jk,int ck, int ts, int sid){
+    int tw;
+    int i,j;
+    int cig = 1;
+    while(ck>0){
+        switch(cig%8){
+            case 1:
+                i = ik-1;
+                j = jk-1;
+                break;
+            case 2:
+                i = ik-1;
+                j = jk;
+                break;
+            case 3:
+                i = ik-1;
+                j = jk+1;
+                break;
+            case 4:
+                i = ik;
+                j = jk+1;
+                break;
+            case 5:
+                i = ik+1;
+                j = jk+1;
+                break;
+            case 6:
+                i = ik+1;
+                j = jk;
+                break;
+            case 7:
+                i = ik+1;
+                j = jk-1;
+                break;
+            case 0: // case 8:
+                i = ik;
+                j = jk-1;
+                break;
+        }
+        struct timeval current_time;// sleeping time calculations
+        struct timespec waiting_time;
+        gettimeofday(&current_time, NULL);
+        current_time.tv_usec += ts*1000;
+        waiting_time.tv_sec = current_time.tv_sec + current_time.tv_usec/1000000;
+        waiting_time.tv_nsec = (current_time.tv_usec%1000000)*1000;
+
+        bool flag = true;
+        while(flag){
+            flag = false;
+            pthread_mutex_lock(&breakLock);
+            tw = pthread_cond_timedwait(&cvBreak,&breakLock,&waiting_time);
+            if(tw==ETIMEDOUT){
+                pthread_mutex_unlock(&breakLock);
+            }
+            else if(Stop){
+                pthread_mutex_unlock(&breakLock);
+                signalAfterSmoke(ik,jk,sid,true);
+                pthread_cond_broadcast(&cvCont);
+                hw2_notify(SNEAKY_SMOKER_STOPPED,sid,0,0);
+                return false;
+            }
+            else if(Break){
+                pthread_mutex_unlock(&breakLock);
+                signalAfterSmoke(ik,jk,sid,false); // signal smoke and littering cells to let them gatherers to go break but dont destroy cvs
+                flag = true;
+            }
+        }
+        pthread_mutex_lock(&smokeMutex);
+        grid[i][j]++;
+        pthread_mutex_unlock(&smokeMutex);
+        hw2_notify(SNEAKY_SMOKER_FLICKED,sid,i,j);
+        ck--;
+        cig++;
+    }
+    hw2_notify(SNEAKY_SMOKER_LEFT,sid,0,0);
+    return true;
 }
 
 void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
@@ -246,10 +551,13 @@ void executeOrders(vector<pair<int,string>>& orders, pthread_t* tids){
         else if(!o.second.compare("stop")){ // send stop signal to all gatherers
             hw2_notify(ORDER_STOP,0,0,0);
             pthread_mutex_lock(&breakLock);
+            if(Break){
+                pthread_cond_broadcast(&cvCont);
+            }
+            pthread_cond_broadcast(&cvBreak);
             Break = 0;
             Stop = 1;
             pthread_mutex_unlock(&breakLock);
-            pthread_cond_broadcast(&cvBreak);
         }
         else
             cerr << "INVALID ORDER" << endl;
@@ -270,11 +578,10 @@ void *gatherer(void *arg){ //arguments: grid, private
     while(restartReq){
         restartReq = 0; // should be unnecessary
         c++;
-        for(int coord=backupCoord;coord<size;coord++ ){ 
-                //cerr << "G" << p->gid << " is waiting " <<  c << endl;
+        for(int coord=backupCoord;coord<size;coord++ ){
             // WAIT FOR ALL CELLS IN THE AREA
+            //cerr << "G" << p->gid << " waiting " << c <<  endl; 
             restartReq = waitCells(p->areas[coord], si, sj,p->gid);
-                //cerr << "G" << p->gid << " is finished waiting " <<  c << endl;
             if(restartReq==1){
                 backupCoord =coord;
                 break;
@@ -287,7 +594,7 @@ void *gatherer(void *arg){ //arguments: grid, private
             
             // CLEAN AREA
             restartReq = cleanArea(p->areas[coord], si, sj, tg, p->gid);
-            if(restartReq==1){             
+            if(restartReq==1){
                 backupCoord =coord;
                 break;
             }
@@ -305,6 +612,7 @@ void *gatherer(void *arg){ //arguments: grid, private
     return NULL;
 }
 
+
 void *commander(void* arg){
     commanderInput* inp = (commanderInput*) arg;
     executeOrders(*(inp->orders),inp->tids);
@@ -313,142 +621,75 @@ void *commander(void* arg){
 
 void *smoker(void *arg){
     Smoker* s = (Smoker*) arg;
-    int go = 0;
-    
-    for(int coord = 0;coord < s->ns; coord++){
-        int ik = s->smokeAreas[coord].ik;
-        int jk = s->smokeAreas[coord].jk;
-        int ck = s->smokeAreas[coord].ck;
-        
-        // WAIT CELLS
+    int sid = s->sid;
+    int ns = s->ns;
+    int ts = s->ts;
+    vector<Triplet>& areas = s->smokeAreas;
+    int size = areas.size();
+    bool ok = true;
 
-        //wait for gatherer or smoker
-        int checkAgain = true;
-        while(checkAgain){
-            checkAgain = false;
-            pthread_mutex_lock(&availableLock);
-            for(int i=ik-1;i<=ik+1;i++){
-                for(int j=jk-1;j<=jk+1;j++){
-                    if(cvAvailable[i][j] == NULL)
-                        continue;
-                    pthread_cond_wait(cvAvailable[i][j],&availableLock);
+    for(int coord=0;coord<size;coord++){
+        int ik = areas[coord].ik;
+        int jk = areas[coord].jk;
+        int ck = areas[coord].ck;
 
-                    // STOP ORDER 
+        // WAIT FOR THE CELL AND AREA
+        ok = waitForSmoke(ik, jk, sid);
+        if(!ok)
+            pthread_exit(NULL);
+        // hw_notify(stopped)
 
-                    pthread_mutex_lock(&breakLock);
-                    if(Stop){
-                        pthread_mutex_unlock(&breakLock);
-                        pthread_mutex_unlock(&availableLock);
-                        hw2_notify(SNEAKY_SMOKER_STOPPED,s->sid,0,0);
-                        pthread_exit(NULL);
-                    }
-                    else
-                        pthread_mutex_unlock(&breakLock);
-
-                    checkAgain = true;
-                    break;
-                }
-                if(checkAgain) break;
-            }
-            pthread_mutex_unlock(&availableLock);
-        }
-
-        // LOCK CELLS
-        pthread_mutex_lock(&smokeLock);
-        for(int i=ik-1;i<=ik+1;i++){
-            for(int j=jk-1;j<=jk+1;j++){
-                if(i==ik && j==jk){
-                    wait(&gridSem[i][j]);
-                    pthread_mutex_lock(&availableLock);
-                    cvAvailable[i][j] = new pthread_cond_t;
-                    pthread_cond_init(cvAvailable[i][j],NULL);
-                    pthread_mutex_unlock(&availableLock);
-                }
-                else{
-                    cvAvailableForSmoke[i][j] = new pthread_cond_t;
-                    pthread_cond_init(cvAvailableForSmoke[i][j],NULL);
-                }
-            }
-        }
-        pthread_mutex_unlock(&smokeLock);
-
-        hw2_notify(SNEAKY_SMOKER_ARRIVED,s->sid,ik,jk);
+        hw2_notify(SNEAKY_SMOKER_ARRIVED, sid, ik, jk);
 
         // SMOKE
-        int litter_i = ik-1;
-        int litter_j = jk-1;
-        int tw;
-        while(ck>0){
-            usleep(s->ts*1000);
-            //tw = pthread_cond_timedwait()
-            
-            // STOP ORDER
+        ok = smokeCigs(ik, jk, ck, ts, sid);
+        if(!ok)
+            pthread_exit(NULL);
+         // hw_notify(stopped)
 
-            pthread_mutex_lock(&gridMutex);
-            grid[litter_i][litter_j]++;
-            pthread_mutex_unlock(&gridMutex);
-            hw2_notify(SNEAKY_SMOKER_FLICKED,s->sid,litter_i,litter_j);
-            ck--;
-        }
-
-        hw2_notify(SNEAKY_SMOKER_LEFT,s->sid,0,0);
-        
-
-        // SIGNAL CELLS
-        pthread_mutex_lock(&smokeLock);
-        for(int i=ik-1;i<=ik+1;i++){
-            for(int j=jk-1;j<=jk+1;j++){
-                if(i==ik && j==jk){
-                    pthread_mutex_lock(&availableLock);
-                    pthread_cond_broadcast(cvAvailable[i][j]);
-                    signal(&gridSem[i][j]);
-                    pthread_cond_destroy(cvAvailable[i][j]);
-                    cvAvailable[i][j] = NULL;
-                    pthread_mutex_unlock(&availableLock);
-                }
-                else{
-                    pthread_cond_broadcast(cvAvailableForSmoke[i][j]);
-                    pthread_cond_destroy(cvAvailableForSmoke[i][j]);
-                    cvAvailableForSmoke[i][j] = NULL;
-                }
-            }
-        }
-        pthread_mutex_unlock(&smokeLock);
-    }        
-
+        // SIGNAL THE CELL AND AREA
+        signalAfterSmoke(ik, jk, sid,true);
+    }
+    
+    hw2_notify(SNEAKY_SMOKER_EXITED, sid, 0, 0);
 
     return NULL;
 }
 
-int main(){
-    /////////// PART-I
 
-    /// input taking
+int main(){
+    
+    // INITIALIZATION
+
     hw2_init_notifier();
     cin >> n >> m;
     grid = new int*[n];
-    numOfGatherers = new int*[n];
     gridSem = new sem_t*[n];
-    cvAvailable = new pthread_cond_t**[n];
-    cvAvailableForSmoke = new pthread_cond_t**[n];
+    cvGatherer = new pthread_cond_t**[n];
+    cvSmoker = new pthread_cond_t**[n];
+    cvLittering = new pthread_cond_t**[n];
+    gridLitter = new int*[n];
     for(int i=0;i<n;i++){ // Cigbutt counts
         grid[i] = new int[m];
-        numOfGatherers[i] = new int[m];
         gridSem[i] = new sem_t[m];
-        cvAvailable[i] = new pthread_cond_t*[m];
-        cvAvailableForSmoke[i] = new pthread_cond_t*[m];
+        cvGatherer[i] = new pthread_cond_t*[m];
+        cvSmoker[i] = new pthread_cond_t*[m];
+        cvLittering[i] = new pthread_cond_t*[m];
+        gridLitter[i] = new int[m];
         for(int j=0;j<m;j++){
-            cin >> grid[i][j];
-            numOfGatherers[i][j] = 0;
+            cin >> grid[i][j]; 
             sem_init(&gridSem[i][j],0,1); 
-            cvAvailable[i][j] = NULL;
-            cvAvailableForSmoke[i][j] = NULL;
+            cvGatherer[i][j] = NULL;
+            cvSmoker[i][j] = NULL;
+            cvLittering[i][j] = NULL;
+            gridLitter[i][j] = 0;
         }
     }
+
+    /////////// INPUT FOR PART-I
     
     int numberOfPrivates; // Number of proper privates
     cin >> numberOfPrivates;
-
     Private privates[numberOfPrivates]; // holds proper privates
     for(int i=0;i<numberOfPrivates;i++){ // Creation of proper privates
         cin >> privates[i].gid;
@@ -497,7 +738,6 @@ int main(){
         }
     }
 
-    // START GATHERERS
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
         pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
@@ -510,18 +750,13 @@ int main(){
     commanderInput inp;
     inp.orders = &orders;
     inp.tids = tids;
-
-    // START COMMANDER
     pthread_create(&ctid,NULL,commander,(void*) &inp); 
 
-    // START SMOKERS
     pthread_t stids[numberOfSmokers];
     for(int s=0;s<numberOfSmokers;s++){
         pthread_create(&stids[s],NULL, smoker, (void*) &smokers[s]);
         hw2_notify(SNEAKY_SMOKER_CREATED, smokers[s].sid,0,0);
     }
-
-    // PART-III
     
     for(int t=0;t<numberOfPrivates;t++)
         pthread_join(tids[t],NULL);
