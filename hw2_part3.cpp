@@ -198,11 +198,11 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                     break;
                 }
                 if(cvLittering[i][j]!=NULL){
-                    //cerr << "G" << gid << "is waiting on " << i << " - " << j  << " for a littering cell" << endl;
+                    cerr << "G" << gid << "is waiting on " << i << " - " << j  << " for a littering cell" << endl;
                     pthread_mutex_unlock(&availableGathererLock);
                     pthread_mutex_unlock(&availableSmokerLock);
                     pthread_cond_wait(cvLittering[i][j],&availableLitteringLock);
-
+                    cerr << "G" << gid << " is continuing on " << i << " - " << j << " from a littering cell" <<
                     pthread_mutex_lock(&breakLock);
                     if(Stop){
                         pthread_mutex_unlock(&breakLock);
@@ -328,6 +328,7 @@ bool waitForSmoke(int ik, int jk, int sid){ // wait for gatherers' area and smok
                 cvSmoker[i][j] = new pthread_cond_t;
                 pthread_cond_init(cvSmoker[i][j],NULL);
                 pthread_mutex_unlock(&availableSmokerLock);
+                wait(&gridSem[i][j]);
                 continue;
             }
             pthread_mutex_lock(&leaveSmokeLock);
