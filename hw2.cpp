@@ -57,6 +57,7 @@ int Stop; // 1 if a stop order executed
 pthread_mutex_t contLock; // lock for cvCont
 pthread_cond_t cvCont = PTHREAD_COND_INITIALIZER; // cv is signaled when a continue order comes
 
+
 pthread_cond_t*** cvSmoker; // availability of the cells, whether a cell includes a smoker
 pthread_mutex_t availableSmokerLock; // lock for cvSmoker
 
@@ -133,6 +134,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         pthread_mutex_unlock(&availableGathererLock);
                         //pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
+                        
                         hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
@@ -176,6 +178,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableGathererLock);
                         pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
+                        
                         hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
@@ -218,6 +221,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableGathererLock);
                         //pthread_mutex_unlock(&availableSmokerLock);
                         pthread_mutex_unlock(&availableLitteringLock);
+                        
                         hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
@@ -437,6 +441,7 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                 else if(Break){// take a break
                     pthread_mutex_unlock(&breakLock);
                     signalCells(coord,si,sj,gid); //unlock all cells
+                    
                     hw2_notify(GATHERER_TOOK_BREAK, gid, 0, 0);
                     pthread_mutex_lock(&contLock);
                     pthread_cond_wait(&cvCont,&contLock);
@@ -673,6 +678,12 @@ void *smoker(void *arg){
     return NULL;
 }
 
+void createGatherers(int numberOfPrivates, Private *privates, pthread_t *tids){
+    for(int t=0;t<numberOfPrivates;t++){
+        pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
+        hw2_notify(GATHERER_CREATED, privates[t].gid, 0, 0);
+    }
+}
 
 int main(){
     
@@ -721,11 +732,18 @@ int main(){
         }
     }
 
+    
+
+    
     // INPUT FOR PART II
     
-    int numberOfOrders; // number of orders
+    int numberOfOrders=0; // number of orders
+    if(!cin.eof()){
+        cin >> numberOfOrders;
+    }
     vector<pair<int,string>> orders; // holds ms-order pairs
-    cin >> numberOfOrders; 
+
+     
 
     for(int i=0;i<numberOfOrders;i++){ // taking orders
         int ms;
@@ -736,11 +754,14 @@ int main(){
 
     Break = 0;
     Stop = 0;
+    //pthread_barrier_init(&barrier,NULL,numberOfPrivates+1);
 
     // INPUT FOR PART-III
 
-    int numberOfSmokers;
-    cin >> numberOfSmokers;
+
+    int numberOfSmokers = 0;
+    if(!cin.eof())
+        cin >> numberOfSmokers;
 
     Smoker smokers[numberOfSmokers];
     for(int i=0;i<numberOfSmokers; i++){
@@ -754,7 +775,7 @@ int main(){
             smokers[i].smokeAreas.push_back(triplet);
         }
     }
-
+    
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
         pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
@@ -767,7 +788,7 @@ int main(){
     commanderInput inp;
     inp.orders = &orders;
     inp.tids = tids;
-    pthread_create(&ctid,NULL,commander,(void*) &inp); 
+    if(numberOfOrders) pthread_create(&ctid,NULL,commander,(void*) &inp); 
 
     pthread_t stids[numberOfSmokers];
     for(int s=0;s<numberOfSmokers;s++){
@@ -779,7 +800,7 @@ int main(){
         pthread_join(tids[t],NULL);
     for(int s=0;s<numberOfSmokers;s++)
         pthread_join(stids[s],NULL);
-    pthread_join(ctid,NULL);
+    if(numberOfOrders) pthread_join(ctid,NULL);
     cerr << "--------------------GRID--------------------- " << endl;
     printGrid();
 
