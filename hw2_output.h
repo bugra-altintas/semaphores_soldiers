@@ -1,18 +1,22 @@
 #ifndef HW2_OUTPUT_H_
 #define HW2_OUTPUT_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum hw2_actions {
     // First part
-    GATHERER_CREATED,
-    GATHERER_ARRIVED,
-    GATHERER_GATHERED,
-    GATHERER_CLEARED,
-    GATHERER_EXITED,
+    PROPER_PRIVATE_CREATED,
+    PROPER_PRIVATE_ARRIVED,
+    PROPER_PRIVATE_GATHERED,
+    PROPER_PRIVATE_CLEARED,
+    PROPER_PRIVATE_EXITED,
 
     // Second part
-    GATHERER_TOOK_BREAK,
-    GATHERER_STOPPED,
-    GATHERER_CONTINUED,
+    PROPER_PRIVATE_TOOK_BREAK,
+    PROPER_PRIVATE_STOPPED,
+    PROPER_PRIVATE_CONTINUED,
     ORDER_BREAK,
     ORDER_CONTINUE,
     ORDER_STOP,
@@ -32,5 +36,8 @@ void hw2_init_notifier(void);
 // The notifier you should use *literally* everywhere.
 void hw2_notify(enum hw2_actions action, unsigned id, unsigned x, unsigned y);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif

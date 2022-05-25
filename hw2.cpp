@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <sys/time.h>
 #include "hw2_output.h"
 
@@ -126,7 +125,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         pthread_mutex_unlock(&availableGathererLock);
                         //pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
-                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                         return 2;
                     }
                     else if(Break){
@@ -135,7 +134,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
                         
-                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
                         pthread_mutex_unlock(&contLock);
@@ -146,11 +145,11 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                             //pthread_mutex_unlock(&availableGathererLock);
                             //pthread_mutex_unlock(&availableSmokerLock);
                             //pthread_mutex_unlock(&availableLitteringLock);
-                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                             return 2;
                         }
                         pthread_mutex_unlock(&breakLock);
-                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        hw2_notify(PROPER_PRIVATE_CONTINUED, gid, 0 ,0);
                         return 1;
                     }
                     pthread_mutex_unlock(&breakLock);
@@ -170,7 +169,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableGathererLock);
                         pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
-                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                         return 2;
                     }
                     else if(Break){
@@ -179,7 +178,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
                         
-                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
                         pthread_mutex_unlock(&contLock);
@@ -189,11 +188,11 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                             pthread_mutex_unlock(&availableGathererLock);
                             //pthread_mutex_unlock(&availableSmokerLock);
                             //pthread_mutex_unlock(&availableLitteringLock);
-                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                             return 2;
                         }
                         pthread_mutex_unlock(&breakLock);
-                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        hw2_notify(PROPER_PRIVATE_CONTINUED, gid, 0 ,0);
                         return 1;
                     }
                     pthread_mutex_unlock(&breakLock);
@@ -213,7 +212,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableGathererLock);
                         //pthread_mutex_unlock(&availableSmokerLock);
                         pthread_mutex_unlock(&availableLitteringLock);
-                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                         return 2;
                     }
                     else if(Break){
@@ -222,7 +221,7 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                         //pthread_mutex_unlock(&availableSmokerLock);
                         pthread_mutex_unlock(&availableLitteringLock);
                         
-                        hw2_notify(GATHERER_TOOK_BREAK,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_TOOK_BREAK,gid,0,0);
                         pthread_mutex_lock(&contLock);
                         pthread_cond_wait(&cvCont,&contLock);
                         pthread_mutex_unlock(&contLock);
@@ -232,11 +231,11 @@ int waitCells(pair<int,int>& coord, int si, int sj, int gid){ // wait for gather
                             pthread_mutex_unlock(&availableGathererLock);
                             //pthread_mutex_unlock(&availableSmokerLock);
                             //pthread_mutex_unlock(&availableLitteringLock);
-                            hw2_notify(GATHERER_STOPPED,gid,0,0);
+                            hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                             return 2;
                         }
                         pthread_mutex_unlock(&breakLock);
-                        hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                        hw2_notify(PROPER_PRIVATE_CONTINUED, gid, 0 ,0);
                         return 1;
                     }
                     pthread_mutex_unlock(&breakLock);
@@ -435,14 +434,14 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                 else if(Stop){// end the thread
                     pthread_mutex_unlock(&breakLock);
                     signalCells(coord,si,sj,gid); //unlock all cells
-                    hw2_notify(GATHERER_STOPPED,gid,0,0);
+                    hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                     return 2;
                 }
                 else if(Break){// take a break
                     pthread_mutex_unlock(&breakLock);
                     signalCells(coord,si,sj,gid); //unlock all cells
                     
-                    hw2_notify(GATHERER_TOOK_BREAK, gid, 0, 0);
+                    hw2_notify(PROPER_PRIVATE_TOOK_BREAK, gid, 0, 0);
                     pthread_mutex_lock(&contLock);
                     pthread_cond_wait(&cvCont,&contLock);
                     pthread_mutex_unlock(&contLock);
@@ -452,19 +451,19 @@ int cleanArea(pair<int,int>& coord, int si, int sj, int tg, int gid){
                         pthread_mutex_unlock(&availableGathererLock);
                         //pthread_mutex_unlock(&availableSmokerLock);
                         //pthread_mutex_unlock(&availableLitteringLock);
-                        hw2_notify(GATHERER_STOPPED,gid,0,0);
+                        hw2_notify(PROPER_PRIVATE_STOPPED,gid,0,0);
                         return 2;
                     }
                     pthread_mutex_unlock(&breakLock);
-                    hw2_notify(GATHERER_CONTINUED, gid, 0 ,0);
+                    hw2_notify(PROPER_PRIVATE_CONTINUED, gid, 0 ,0);
                     return 1;
                 }
                 grid[i][j]--;
-                hw2_notify(GATHERER_GATHERED, gid, i, j);
+                hw2_notify(PROPER_PRIVATE_GATHERED, gid, i, j);
             }
         }
     }
-    hw2_notify(GATHERER_CLEARED, gid, 0, 0);
+    hw2_notify(PROPER_PRIVATE_CLEARED, gid, 0, 0);
     return 0;
 }
 
@@ -612,7 +611,7 @@ void *gatherer(void *arg){ //arguments: grid, private
                 pthread_exit(NULL);
             }
 
-            hw2_notify(GATHERER_ARRIVED, p->gid, p->areas[coord].first, p->areas[coord].second);
+            hw2_notify(PROPER_PRIVATE_ARRIVED, p->gid, p->areas[coord].first, p->areas[coord].second);
             
             // CLEAN AREA
             restartReq = cleanArea(p->areas[coord], si, sj, tg, p->gid);
@@ -629,7 +628,7 @@ void *gatherer(void *arg){ //arguments: grid, private
         }
     }
     
-    hw2_notify(GATHERER_EXITED, p->gid, 0, 0);
+    hw2_notify(PROPER_PRIVATE_EXITED, p->gid, 0, 0);
 
     return NULL;
 }
@@ -678,12 +677,6 @@ void *smoker(void *arg){
     return NULL;
 }
 
-void createGatherers(int numberOfPrivates, Private *privates, pthread_t *tids){
-    for(int t=0;t<numberOfPrivates;t++){
-        pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
-        hw2_notify(GATHERER_CREATED, privates[t].gid, 0, 0);
-    }
-}
 
 int main(){
     
@@ -779,7 +772,7 @@ int main(){
     pthread_t tids[numberOfPrivates];
     for(int t=0;t<numberOfPrivates;t++){
         pthread_create(&tids[t],NULL,gatherer,(void*) &privates[t]); 
-        hw2_notify(GATHERER_CREATED, privates[t].gid, 0, 0);
+        hw2_notify(PROPER_PRIVATE_CREATED, privates[t].gid, 0, 0);
     }
     
     // PART-II
@@ -801,10 +794,6 @@ int main(){
     for(int s=0;s<numberOfSmokers;s++)
         pthread_join(stids[s],NULL);
     if(numberOfOrders) pthread_join(ctid,NULL);
-    cerr << "--------------------GRID--------------------- " << endl;
-    printGrid();
-
-    cerr << "--------------------END-----------------------" << endl;
     return 0;
     
 }
